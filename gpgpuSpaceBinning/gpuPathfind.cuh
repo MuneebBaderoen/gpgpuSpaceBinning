@@ -17,7 +17,12 @@ __global__ void cudaFindLocalPath(){
 void checkError(cudaError_t errorBool, std::string message){
 	using namespace std;
 	if(!errorBool)
-		cout<<message<<endl;
+		cout<<"Error: ";
+	else
+		cout<<"Passed: ";
+		
+	cout<<message<<endl;
+	cint.get();
 }
 
 

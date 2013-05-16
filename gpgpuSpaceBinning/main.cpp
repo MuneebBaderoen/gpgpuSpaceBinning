@@ -149,7 +149,10 @@ void cpuSequentialBinning(){
 	//cout<<"counter: "<<counter<<endl;
 }
 
+void gpuParallelBinning(){
+	
 
+}
 
 int main(int argc, char** argv){
 	printf("num %i\n", 8);
@@ -164,7 +167,8 @@ int main(int argc, char** argv){
 
 	binInitialization();
 
-	cpuSequentialBinning();
+	//cpuSequentialBinning();
+	gpuParallelBinning();
 
 	cout<<"run complete"<<endl;
 
