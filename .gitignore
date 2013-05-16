@@ -11,3 +11,8 @@
 *.lai
 *.la
 *.a
+
+/gpgpuSpaceBinning/Debug/*.*
+/gpgpuSpaceBinning/ipch/*
+/gpgpuSpaceBinning/*.vcx*
+gpgpuSpaceBinning/gpgpuSpaceBinning.*
