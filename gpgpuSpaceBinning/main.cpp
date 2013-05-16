@@ -35,16 +35,18 @@ float stepSize = 10;
 
 //Host variable declarations
 Asteroid * h_asteroids;
-Asteroid * h_bins;
+float * h_bins;
 Point h_ship;
 Point h_baseStation;
+Point h_gridSize;
 
 
 //Device variable declarations
 Asteroid * d_asteroids;
-Asteroid * d_bins;
+float * d_bins;
 Point d_ship;
 Point d_baseStation;
+Point d_gridSize;
 
 
 void readFile(const char* filename){
@@ -92,19 +94,59 @@ void readFile(const char* filename){
 
 }
 
+void binInitialization(){
+	using namespace std;
+
+	//calculate grid size
+	h_gridSize.x=(int)(h_baseStation.x+stepSize/2)/(int) stepSize + 1;
+	h_gridSize.y=(int)(h_baseStation.y+stepSize/2)/(int) stepSize + 1;
+
+	//allocate memory
+	h_bins = new float[int(h_gridSize.x*h_gridSize.y)];
+
+	//initialize to 0
+	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i)
+		h_bins[i]=0;
+
+	
+	
+}
+
 void cpuSequentialBinning(){
 	using namespace std;
-	for(int i = 0; i<10; ++i){
+	Point binId, binPos;
+
+	
+	for(int i = 0; i<numAsteroids; ++i){
 		//Point p (h_asteroids[i].x, h_asteroids[i].y);
 
-		cout<<h_asteroids[i]<<endl;
+		//cout<<h_asteroids[i]<<endl;
 
-		Point binPos((int)(h_asteroids[i].x+stepSize/2)/(int) stepSize,
-			(int)(h_asteroids[i].y+stepSize/2)/(int) stepSize);
+		binId.x=(int)(h_asteroids[i].x+stepSize/2)/(int) stepSize;
+		binId.y=(int)(h_asteroids[i].y+stepSize/2)/(int) stepSize;
 
-		cout<<binPos<<endl;
+		//cout<<"BinID: "<<binId<<"bins index: "<<(binId.y*h_gridSize.x+binId.x)<<endl;
+		
+		//if((int)(binId.y*h_gridSize.x+binId.x)>h_gridSize.x*h_gridSize.x-1)
+		//	continue;
+
+		binPos.x=binId.x*stepSize;
+		binPos.y=binId.y*stepSize;
+
+		float deltaX = h_asteroids[i].x-binPos.x;
+		float deltaY = h_asteroids[i].y-binPos.y;
+		
+		if((deltaX*deltaX+deltaY*deltaY)<stepSize){
+			//cout<<(int)(binId.y*h_gridSize.x+binId.x)<<endl;
+			h_bins[(int)(binId.y*h_gridSize.x+binId.x)]+=h_asteroids[i].value;
+		}
+
+		//cout<<h_bins[(int)(binPos.y*h_gridSize.x+binPos.x)]<<":"<<h_asteroids[i].value<<endl;
+
+		//cout<<binPos<<endl;
 
 	}
+	//cout<<"counter: "<<counter<<endl;
 }
 
 
@@ -119,7 +161,12 @@ int main(int argc, char** argv){
 	cout<<"ShipPosition: "<<h_ship<<endl;
 	cout<<"BasePosition: "<<h_baseStation<<endl;
 
+
+	binInitialization();
+
 	cpuSequentialBinning();
+
+	cout<<"run complete"<<endl;
 
 	cin.get();
 	return 0;
