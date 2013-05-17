@@ -212,8 +212,11 @@ void cpuGetPath(){
 
 		if(nextDir==1){nextIndex.x-=1;}
 		if(nextDir==-1){nextIndex.y-=1;}
-		//cout<<"current: "<<currentPoint<<endl;
-		h_path[(int)(currentPoint.y*h_gridSize.x+currentPoint.x)]=1;		
+		//cout<<"current  : "<<currentPoint<<endl;
+		h_path[(int)(currentPoint.y*h_gridSize.x+currentPoint.x)]=1;
+
+		cout<<"direction: "<<((nextDir==1)?"left":"up")<<endl; 
+		//cout<<"next     : "<<endl<<endl;
 		
 	}while(currentPoint.x!=0 || currentPoint.y!=0);
 
