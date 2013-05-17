@@ -29,13 +29,17 @@ std::ostream& operator<<(std::ostream&out, const Point& pt){
 }
 
 
+
+
 //Global declarations
 unsigned long long numAsteroids;
 float stepSize = 10;
 
+float * h_path;
+
 //Host variable declarations
 Asteroid * h_asteroids;
-Point * h_bins; //Bin x is value, y is direction for path calculation
+float * h_bins; //Bin x is value, y is direction for path calculation
 
 Point h_ship;
 Point h_baseStation;
@@ -44,7 +48,7 @@ Point h_gridSize;
 
 //Device variable declarations
 Asteroid * d_asteroids;
-Point * d_bins;//Bin x is value, y is direction for path calculation
+float * d_bins;//Bin x is value, y is direction for path calculation
 
 Point d_ship;
 Point d_baseStation;
@@ -95,7 +99,16 @@ void readFile(const char* filename){
 	}
 
 	inFile.close();
+}
 
+void binPrint(float * a){
+	using namespace std;
+	for(int i = 0; i<h_gridSize.x; ++i){
+		for(int j = 0; j<h_gridSize.y; ++j){
+			cout<<a[(int)(j*h_gridSize.x+i)]<<", ";
+		}
+		cout<<endl;
+	}
 }
 
 void binInitialization(){
@@ -106,13 +119,39 @@ void binInitialization(){
 	h_gridSize.y=(int)(h_baseStation.y+stepSize/2)/(int) stepSize + 1;
 
 	//allocate memory
-	h_bins = new Point[int(h_gridSize.x*h_gridSize.y)];
+	h_bins = new float[int(h_gridSize.x*h_gridSize.y)];
+	h_path = new float[int(h_gridSize.x*h_gridSize.y)];
 
 	//initialize to 0
 	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i)
-		h_bins[i].x=0;	
-	
+		h_bins[i]=0;	
+
+	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i)
+		h_path[i]=0;		
 }
+
+void binInitializationTest(){
+	using namespace std;
+
+	//calculate grid size
+	h_gridSize.x=(int)(h_baseStation.x+stepSize/2)/(int) stepSize + 1;
+	h_gridSize.y=(int)(h_baseStation.y+stepSize/2)/(int) stepSize + 1;
+
+	//allocate memory
+	h_bins = new float[int(h_gridSize.x*h_gridSize.y)];
+	h_path = new float[int(h_gridSize.x*h_gridSize.y)];
+
+	//initialize to 0
+	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i)
+		h_bins[i]=1;	
+
+	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i)
+		h_path[i]=0;	
+
+	h_bins[(int)(5*h_gridSize.x+5)]=5;	
+}
+
+
 
 void cpuSequentialBinning(){
 	using namespace std;
@@ -130,35 +169,57 @@ void cpuSequentialBinning(){
 		float deltaY = h_asteroids[i].y-binPos.y;
 		
 		if((deltaX*deltaX+deltaY*deltaY)<stepSize*stepSize/4){			
-			h_bins[(int)(binId.y*h_gridSize.x+binId.x)].x+=h_asteroids[i].value;
+			h_bins[(int)(binId.y*h_gridSize.x+binId.x)]+=h_asteroids[i].value;
 		}		
 	}	
 }
 
-
 void cpuValuePropagation(){
-//Only works on square grids. use x,y for rectangles
-//y value of -1 means from above
 	using namespace std;
 	for(int i = 0; i<h_gridSize.x; ++i){
-		for(int j = 0; j<h_gridSize.y; ++j){
-			double sumleft=0, sumup=0; 
-			if(j-1>=0){
-				sumleft = h_bins[(int)(j*h_gridSize.x+i)].x + h_bins[(int)((j-1)*h_gridSize.x+i)].x;			
-			}
+		for(int j = 0; j<h_gridSize.y; ++j){	
+			 
+			double sumup   = (j-1>=0)?h_bins[(int)((j-1)*h_gridSize.x+i)]:0;				
+			double sumleft = (i-1>=0)?h_bins[(int)(j*h_gridSize.x+(i-1))]:0;						
 
-			if(i-1>=0){
-				sumup   = h_bins[(int)(j*h_gridSize.x+i)].x + h_bins[(int)(j*h_gridSize.x+(i-1))].x;
-			}
+			//h_bins[(int)(j*h_gridSize.x+i)].y = (((sumleft-sumup)>0)?1:-1);
+			h_bins[(int)(j*h_gridSize.x+i)]+= max(sumleft, sumup);
 
-			h_bins[(int)(j*h_gridSize.x+i)].y= (max(sumleft,sumup)==sumleft?1:-1);
-			cout<<"max is from: "<<(h_bins[(int)(j*h_gridSize.x+i)].y==-1?"above":"left")<<endl;
+			//cout<<"Direction set: "<<h_bins[(int)(j*h_gridSize.x+i)].y<<endl;
+			//cout<<(int)(j*h_gridSize.x+i)<<" max is from: "<<(h_bins[(int)(j*h_gridSize.x+i)].y==-1?"above":"left")<<endl;
+		
 
+			
 		}
 	}	
 }
 
-void cpuValuePropagationTest(){
+void cpuGetPath(){
+	//binPrint(h_bins);
+
+	using namespace std;
+
+	Point currentPoint;
+	Point nextIndex(h_gridSize.x-1, h_gridSize.x-1);
+	do{		
+		double sumup   = (nextIndex.y-1>=0)?h_bins[(int)((nextIndex.y-1)*h_gridSize.x+nextIndex.x)]:0;				
+		double sumleft = (nextIndex.x-1>=0)?h_bins[(int)(nextIndex.y*h_gridSize.x+(nextIndex.x-1))]:0;
+
+		int nextDir = (max(sumleft,sumup)==sumleft)?1:-1;
+		//h_bins[(int)(j*h_gridSize.x+i)].y = (((sumleft-sumup)>0)?1:-1);
+		currentPoint.x=nextIndex.x;
+		currentPoint.y=nextIndex.y;
+
+		if(nextDir==1){nextIndex.x-=1;}
+		if(nextDir==-1){nextIndex.y-=1;}
+		//cout<<"current: "<<currentPoint<<endl;
+		h_path[(int)(currentPoint.y*h_gridSize.x+currentPoint.x)]=1;		
+		
+	}while(currentPoint.x!=0 || currentPoint.y!=0);
+
+	cout<<"Printing path now: "<<endl;
+	binPrint(h_path);
+
 
 }
 
@@ -166,17 +227,14 @@ void cpuValuePropagationTest(){
 void gpuInitialization(){
 	cudaSetDevice(0);
 	cudaFree(NULL);
-
-
-
 }
 
 void gpuParallelBinning(){
 
 	checkError()
 
-}
-*/
+}*/
+
 
 int main(int argc, char** argv){
 	printf("num %i\n", 8);
@@ -189,11 +247,18 @@ int main(int argc, char** argv){
 	cout<<"BasePosition: "<<h_baseStation<<endl;
 
 
-	binInitialization();
+	//binInitialization();
+	binInitializationTest();
 
-	cpuSequentialBinning();
+	//CPU implementation
+	
+	cpuSequentialBinning();	
 	cpuValuePropagation();
-	cpuValuePropagationTest();
+	cpuGetPath();
+
+	//GPU implementation
+
+	//gpuValuePropagationTest();
 	//gpuParallelBinning();
 
 	cout<<"run complete"<<endl;
