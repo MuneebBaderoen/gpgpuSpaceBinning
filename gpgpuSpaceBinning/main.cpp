@@ -1,8 +1,8 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <cuda.h>
-#include "gpuPathfind.cuh"
+//#include <cuda.h>
+//#include "gpuPathfind.cuh"
 
 struct Asteroid{
 	Asteroid(){}
@@ -35,7 +35,8 @@ float stepSize = 10;
 
 //Host variable declarations
 Asteroid * h_asteroids;
-float * h_bins;
+Point * h_bins; //Bin x is value, y is direction for path calculation
+
 Point h_ship;
 Point h_baseStation;
 Point h_gridSize;
@@ -43,11 +44,14 @@ Point h_gridSize;
 
 //Device variable declarations
 Asteroid * d_asteroids;
-float * d_bins;
+Point * d_bins;//Bin x is value, y is direction for path calculation
+
 Point d_ship;
 Point d_baseStation;
 Point d_gridSize;
 
+//cuda stuff
+//cudaError_t result;
 
 void readFile(const char* filename){
 	using namespace std;
@@ -70,7 +74,7 @@ void readFile(const char* filename){
     	inFile.seekg (pos, ios::beg);
 
 		//initialize array
-		h_asteroids = new Asteroid [numAsteroids*sizeof(Asteroid)];
+		h_asteroids = new Asteroid [numAsteroids];
 
 		int count = 0;
 
@@ -102,33 +106,22 @@ void binInitialization(){
 	h_gridSize.y=(int)(h_baseStation.y+stepSize/2)/(int) stepSize + 1;
 
 	//allocate memory
-	h_bins = new float[int(h_gridSize.x*h_gridSize.y)];
+	h_bins = new Point[int(h_gridSize.x*h_gridSize.y)];
 
 	//initialize to 0
 	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i)
-		h_bins[i]=0;
-
-	
+		h_bins[i].x=0;	
 	
 }
 
 void cpuSequentialBinning(){
 	using namespace std;
 	Point binId, binPos;
-
 	
-	for(int i = 0; i<numAsteroids; ++i){
-		//Point p (h_asteroids[i].x, h_asteroids[i].y);
-
-		//cout<<h_asteroids[i]<<endl;
+	for(int i = 0; i<numAsteroids; ++i){	
 
 		binId.x=(int)(h_asteroids[i].x+stepSize/2)/(int) stepSize;
 		binId.y=(int)(h_asteroids[i].y+stepSize/2)/(int) stepSize;
-
-		//cout<<"BinID: "<<binId<<"bins index: "<<(binId.y*h_gridSize.x+binId.x)<<endl;
-		
-		//if((int)(binId.y*h_gridSize.x+binId.x)>h_gridSize.x*h_gridSize.x-1)
-		//	continue;
 
 		binPos.x=binId.x*stepSize;
 		binPos.y=binId.y*stepSize;
@@ -136,23 +129,54 @@ void cpuSequentialBinning(){
 		float deltaX = h_asteroids[i].x-binPos.x;
 		float deltaY = h_asteroids[i].y-binPos.y;
 		
-		if((deltaX*deltaX+deltaY*deltaY)<stepSize){
-			//cout<<(int)(binId.y*h_gridSize.x+binId.x)<<endl;
-			h_bins[(int)(binId.y*h_gridSize.x+binId.x)]+=h_asteroids[i].value;
+		if((deltaX*deltaX+deltaY*deltaY)<stepSize*stepSize/4){			
+			h_bins[(int)(binId.y*h_gridSize.x+binId.x)].x+=h_asteroids[i].value;
+		}		
+	}	
+}
+
+
+void cpuValuePropagation(){
+//Only works on square grids. use x,y for rectangles
+//y value of -1 means from above
+	using namespace std;
+	for(int i = 0; i<h_gridSize.x; ++i){
+		for(int j = 0; j<h_gridSize.y; ++j){
+			double sumleft=0, sumup=0; 
+			if(j-1>=0){
+				sumleft = h_bins[(int)(j*h_gridSize.x+i)].x + h_bins[(int)((j-1)*h_gridSize.x+i)].x;			
+			}
+
+			if(i-1>=0){
+				sumup   = h_bins[(int)(j*h_gridSize.x+i)].x + h_bins[(int)(j*h_gridSize.x+(i-1))].x;
+			}
+
+			h_bins[(int)(j*h_gridSize.x+i)].y= (max(sumleft,sumup)==sumleft?1:-1);
+			cout<<"max is from: "<<(h_bins[(int)(j*h_gridSize.x+i)].y==-1?"above":"left")<<endl;
+
 		}
+	}	
+}
 
-		//cout<<h_bins[(int)(binPos.y*h_gridSize.x+binPos.x)]<<":"<<h_asteroids[i].value<<endl;
+void cpuValuePropagationTest(){
 
-		//cout<<binPos<<endl;
+}
 
-	}
-	//cout<<"counter: "<<counter<<endl;
+/*
+void gpuInitialization(){
+	cudaSetDevice(0);
+	cudaFree(NULL);
+
+
+
 }
 
 void gpuParallelBinning(){
-	
+
+	checkError()
 
 }
+*/
 
 int main(int argc, char** argv){
 	printf("num %i\n", 8);
@@ -167,8 +191,10 @@ int main(int argc, char** argv){
 
 	binInitialization();
 
-	//cpuSequentialBinning();
-	gpuParallelBinning();
+	cpuSequentialBinning();
+	cpuValuePropagation();
+	cpuValuePropagationTest();
+	//gpuParallelBinning();
 
 	cout<<"run complete"<<endl;
 
