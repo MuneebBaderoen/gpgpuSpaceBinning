@@ -52,7 +52,7 @@ int gridXtoDevice= 0;
 
 //Global declarations
 long numAsteroids;
-float stepSize = 5;
+float stepSize = 10;
 
 float * h_path;
 float * h_comparePathToGPU;
