@@ -5,7 +5,8 @@
 #include <algorithm>
 #include <cuda.h>
 #include <cuda_runtime.h>
-
+#include <sm_12_atomic_functions.h>
+#include "device_functions.h"
 
 struct Asteroid{
 	Asteroid(){}
@@ -51,7 +52,7 @@ int gridXtoDevice= 0;
 
 //Global declarations
 long numAsteroids;
-float stepSize = 10;
+float stepSize = 5;
 
 float * h_path;
 float * h_comparePathToGPU;
@@ -146,7 +147,7 @@ void pathPrint(float * a){
 			if(it!=onPath.end())
 				cout<<"1, ";
 			else
-				cout<<"0, ";
+				cout<<"-, ";
 		}
 		cout<<endl;
 	}
@@ -294,16 +295,22 @@ __global__ void gpuAllocateAsteroidToBin(Asteroid* asteroids, float* bins){
 		float deltaX = asteroids[i].x-binPosx;
 		float deltaY = asteroids[i].y-binPosy;
 		
-		if((deltaX*deltaX+deltaY*deltaY)<dc_stepSize*dc_stepSize/4){			
-			bins[(int)(binIdy*dc_gridx+binIdx)]+=asteroids[i].value;
-		}	
+		if((deltaX*deltaX+deltaY*deltaY)<dc_stepSize*dc_stepSize/4){
+			//if(bins[(int)(binIdy*dc_gridx+binIdx)]<i)
+			//	bins[(int)(binIdy*dc_gridx+binIdx)]=i;
+			//int x = 0;
+			//atomicAdd(&x, 1);
+			atomicAdd(&bins[(int)(binIdy*dc_gridx+binIdx)],asteroids[i].value);
+			//asteroids[i].value=0;
+		}
+		
 	}
 	
 	
 	
 }
 
-__global__ void gpuPropagateMaxValuesPart1(float* bins,int level){
+__global__ void gpuPropagateMaxValues(float* bins,int level){
 
 	int i_x = blockIdx.x * blockDim.x + threadIdx.x;
 	int i_y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -451,7 +458,7 @@ void gpuParallelBinning(){
 void gpuValuePropagation(){
 	
 	int numThreads = h_gridSize.x;
-	int threadsPerBlock = 4;
+	int threadsPerBlock = 1024;
 	int cudaBlockx = ceil(sqrtf(threadsPerBlock));
 
 	int numBlocks = ceil((float)numThreads/threadsPerBlock);
@@ -468,11 +475,10 @@ void gpuValuePropagation(){
 	//dim3 cudaGridSize(1,1,1);
 	
 	for(int i = 0; i< 2*h_gridSize.x-1;i++){	
-		gpuPropagateMaxValuesPart1<<<cudaGridSize,cudaBlockSize>>>(d_bins,i);	
+		gpuPropagateMaxValues<<<cudaGridSize,cudaBlockSize>>>(d_bins,i);	
 		//cudaThreadSynchronize();
 	}
 }
-
 
 void gpuGetPath(){
 	
@@ -509,15 +515,19 @@ void gpuCopyDataBack(){
 	using namespace std;
 	result = cudaMemcpy(h_compareBinsToGPU, d_bins, (int)(h_gridSize.x*h_gridSize.x*sizeof(float)), cudaMemcpyDeviceToHost);
 	checkError(result,"Copying bins data back from gpu");
-	//cout<<h_compareBinsToGPU[0]<<":"<<h_compareBinsToGPU[1]<<":"<<h_compareBinsToGPU[2]<<endl;
+	
 
-	binPrint(h_compareBinsToGPU);
-	unsigned long long testNumAst = 0;
+	for(int i = 0; i<h_gridSize.x;++i){
+		for(int j = 0; j<h_gridSize.x;++j){
 
-	result = cudaMemcpyFromSymbol(&testNumAst, dc_numAsteroids, sizeof(long), 0,cudaMemcpyDeviceToHost);
-	checkError(result,"Copying numast back from gpu");
+			//h_compareBinsToGPU[(int)(j*h_gridSize.x+i)]=(h_compareBinsToGPU[(int)(j*h_gridSize.x+i)]==h_bins[(int)(j*h_gridSize.x+i)]);
+		}
+	}
 
-	cout<<"Numast:"<<testNumAst<<endl;
+
+
+
+	
 
 	cudaFree(d_asteroids);
 	cudaFree(d_bins);//Bin x is value, y is direction for path calculation
@@ -538,9 +548,9 @@ int main(int argc, char** argv){
 	cout<<"BasePosition: "<<h_baseStation<<endl;
 
 
-	//binInitialization();
-	binInitializationTest();
-
+	binInitialization();
+	//binInitializationTest();
+	gpuInitialization();
 	//CPU implementation
 	
 	cpuSequentialBinning();	
@@ -553,11 +563,15 @@ int main(int argc, char** argv){
 
 
 	//GPU implementation
-	gpuInitialization();
+	
 	gpuParallelBinning();
 	gpuValuePropagation();
 	gpuCopyDataBack();
+
+	binPrint(h_compareBinsToGPU);
+
 	gpuGetPath();
+
 	pathPrint(h_comparePathToGPU);
 
 	cout<<"run complete"<<endl;
