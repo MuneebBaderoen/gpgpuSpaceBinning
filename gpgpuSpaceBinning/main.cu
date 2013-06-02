@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <ctime>
+#include "timer.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <sm_12_atomic_functions.h>
@@ -12,7 +14,6 @@ struct Asteroid{
 	Asteroid(){}
 	Asteroid(float x1, float y1, float z1): x(x1) , y(y1) , value(z1){}
 	float x, y, value;
-
 };
 
 std::ostream& operator<<(std::ostream&out, const Asteroid& ast){
@@ -44,24 +45,25 @@ __device__ float * d_bins;//Bin x is value, y is direction for path calculation
 __constant__ long dc_numAsteroids;
 __constant__ float dc_stepSize;
 __constant__ int dc_gridx;
-int gridXtoDevice= 0;
-
-
 
 
 
 //Global declarations
 long numAsteroids;
-float stepSize = 10;
+long totalAsteroids;
+float stepSize = 30;
+
+Point stepDir (1,1);
+__constant__ Point dc_stepDir; 
 
 float * h_path;
-float * h_comparePathToGPU;
+//float * h_comparePathToGPU;
 //__device__ float * d_path;
 
 //Host variable declarations
 Asteroid * h_asteroids;
 float * h_bins; //Bin x is value, y is direction for path calculation
-float * h_compareBinsToGPU;
+//float * h_compareBinsToGPU;
 
 Point h_ship;
 Point h_baseStation;
@@ -76,11 +78,9 @@ cudaError_t result;
 
 
 //--------------------INPUT
-void readFile(const char* filename){
+void readFile(std::ifstream &inFile){
 	using namespace std;
 
-	ifstream inFile(filename, ios::in | ios::binary);
-	//string s = "";
 	if(inFile.is_open()){
 		inFile.seekg (0, ios::beg);
 		//read base station position
@@ -90,35 +90,43 @@ void readFile(const char* filename){
 		inFile.read(reinterpret_cast<char*>(&f), sizeof(float));
 
 		//get number of asteroids
-		int pos = inFile.tellg ();		
+		long pos = inFile.tellg ();		
 
 		inFile.seekg (0, ios::end);
-   		numAsteroids = (long)(((int)inFile.tellg())-pos)/12;   		
+   		totalAsteroids = (long)(((long)inFile.tellg())-pos)/12;   		
     	inFile.seekg (pos, ios::beg);
 
-		//initialize array
-		h_asteroids = new Asteroid [numAsteroids];
+    	cout<<"Number of asteroids: "<<totalAsteroids<<endl;
 
-		int count = 0;
+		
+	}
+
+	
+}
+
+void readAsteroidChunk(std::ifstream &inFile){
+
+		//initialize array
+		h_asteroids = new Asteroid [numAsteroids];		
 
 		//populate array
-		while(inFile.good()){	
+		for(int i = 0; i<numAsteroids; ++i){	
 			float xVal;
 			inFile.read(reinterpret_cast<char*>(&xVal), sizeof(float));
 			float yVal;
 			inFile.read(reinterpret_cast<char*>(&yVal), sizeof(float));
 			float val;
 			inFile.read(reinterpret_cast<char*>(&val), sizeof(float));
-			h_asteroids[count++]=Asteroid(xVal, yVal, val);
+			h_asteroids[i]=Asteroid(xVal, yVal, val);
 			//cout<<count-1<<": "<<asteroids[count-1]<<endl;
 			//cout<<"Float val: "<<f<<" "<<2*f<<endl;
 			
 
 		}
-	}
 
-	inFile.close();
+
 }
+
 
 //--------------------OUTPUT TO CONSOLE
 void binPrint(float * a){
@@ -134,13 +142,15 @@ void binPrint(float * a){
 void pathPrint(float * a){
 	using namespace std;
 
-	vector<Point> onPath;
+	//vector<Point> onPath;
 
-	for(int i = 0; i<2*2*h_gridSize.x-1; i+=2){
+	for(int i = 0; i<2*2*h_gridSize.x-2; i+=2){
 		float x = a[i], y=a[i+1];
-		onPath.push_back(Point(x,y));
+		//onPath.push_back(Point(x,y));
+		cout<<"("<<x<<", "<<y<<") - ";
 	}
-
+	cout<<endl;
+	/*
 	for(int i = 0; i<h_gridSize.x; ++i){
 		for(int j = 0; j<h_gridSize.y; ++j){
 			vector<Point>::iterator it = find(onPath.begin(), onPath.end(), Point(i,j));
@@ -151,6 +161,7 @@ void pathPrint(float * a){
 		}
 		cout<<endl;
 	}
+	*/
 }
 
 //--------------------BIN INITIALIZATION
@@ -161,23 +172,35 @@ void binInitialization(){
 	h_gridSize.x=(int)(h_baseStation.x+stepSize/2)/(int) stepSize + 1;
 	h_gridSize.y=(int)(h_baseStation.y+stepSize/2)/(int) stepSize + 1;
 
+
+	if(h_gridSize.x<0){
+		stepDir.x=-1;		
+		h_gridSize.x*=-1;
+	}
+
+	if(h_gridSize.y<0){
+		stepDir.y=-1;
+		h_gridSize.y*=-1;
+	}
 	//allocate memory
+
+	cout<<"Step direction"<<stepDir<<endl;
 	
 	h_bins = new float[int(h_gridSize.x*h_gridSize.y)];
 	h_path = new float[int(2*(2*h_gridSize.x-1))];
 
-	h_compareBinsToGPU = new float[int(h_gridSize.x*h_gridSize.y)];
-	h_comparePathToGPU = new float[int(2*(2*h_gridSize.x-1))];
+	//h_compareBinsToGPU = new float[int(h_gridSize.x*h_gridSize.y)];
+	//h_comparePathToGPU = new float[int(2*(2*h_gridSize.x-1))];
 
 	//initialize to 0
 	for(int i = 0; i< h_gridSize.x*h_gridSize.y;++i){
 		h_bins[i]=0;	
-		h_compareBinsToGPU[i]=0;		
+	//	h_compareBinsToGPU[i]=0;		
 	}
 
 	for(int i = 0; i< 2*(2*h_gridSize.x-1);++i){
 		h_path[i]=0;		
-		h_comparePathToGPU[i]=0;
+	//	h_comparePathToGPU[i]=0;
 	}
 }
 
@@ -199,16 +222,15 @@ void cpuSequentialBinning(){
 	using namespace std;
 	Point binId, binPos;
 	
-	for(int i = 0; i<numAsteroids; ++i){	
-
-		binId.x=(int)(h_asteroids[i].x+stepSize/2)/(int) stepSize;
-		binId.y=(int)(h_asteroids[i].y+stepSize/2)/(int) stepSize;
+	for(int i = 0; i<numAsteroids; ++i){
+		binId.x=(int)(h_asteroids[i].x*stepDir.x+stepSize/2)/(int) stepSize;
+		binId.y=(int)(h_asteroids[i].y*stepDir.y+stepSize/2)/(int) stepSize;			
 
 		binPos.x=binId.x*stepSize;
 		binPos.y=binId.y*stepSize;
 
-		float deltaX = h_asteroids[i].x-binPos.x;
-		float deltaY = h_asteroids[i].y-binPos.y;
+		float deltaX = h_asteroids[i].x*stepDir.x-binPos.x;
+		float deltaY = h_asteroids[i].y*stepDir.y-binPos.y;
 		
 		if((deltaX*deltaX+deltaY*deltaY)<stepSize*stepSize/4){			
 			h_bins[(int)(binId.y*h_gridSize.x+binId.x)]+=h_asteroids[i].value;
@@ -274,34 +296,20 @@ __global__ void gpuAllocateAsteroidToBin(Asteroid* asteroids, float* bins){
 	int pitch = gridDim.x * blockDim.x;
 	
 	int i = i_y * pitch + i_x;	
-	/*
-	int i_x = blockIdx.x * blockDim.x + threadIdx.x;
-	int i_y = blockIdx.y * blockDim.y + threadIdx.y;
-	
-
-	int pitch = gridDim.x * blockDim.x;
-	
-
-	int i = i_y * pitch + i_x;
-	*/
+		
 	if(i<dc_numAsteroids){
 	
-		float binIdx=(int)(asteroids[i].x+dc_stepSize/2)/(int) dc_stepSize;
-		float binIdy=(int)(asteroids[i].y+dc_stepSize/2)/(int) dc_stepSize;
+		float binIdx=(int)(asteroids[i].x*dc_stepDir.x+dc_stepSize/2)/(int) dc_stepSize;
+		float binIdy=(int)(asteroids[i].y*dc_stepDir.y+dc_stepSize/2)/(int) dc_stepSize;
 
 		float binPosx=binIdx*dc_stepSize;
 		float binPosy=binIdy*dc_stepSize;
 
-		float deltaX = asteroids[i].x-binPosx;
-		float deltaY = asteroids[i].y-binPosy;
+		float deltaX = asteroids[i].x*dc_stepDir.x-binPosx;
+		float deltaY = asteroids[i].y*dc_stepDir.y-binPosy;
 		
-		if((deltaX*deltaX+deltaY*deltaY)<dc_stepSize*dc_stepSize/4){
-			//if(bins[(int)(binIdy*dc_gridx+binIdx)]<i)
-			//	bins[(int)(binIdy*dc_gridx+binIdx)]=i;
-			//int x = 0;
-			//atomicAdd(&x, 1);
-			atomicAdd(&bins[(int)(binIdy*dc_gridx+binIdx)],asteroids[i].value);
-			//asteroids[i].value=0;
+		if((deltaX*deltaX+deltaY*deltaY)<dc_stepSize*dc_stepSize/4){			
+			atomicAdd(&bins[(int)(binIdy*dc_gridx+binIdx)],asteroids[i].value);			
 		}
 		
 	}
@@ -323,53 +331,6 @@ __global__ void gpuPropagateMaxValues(float* bins,int level){
 		float sumLeft = (idx-1>=0)?bins[idy*dc_gridx+(idx-1)]:0;
 		bins[idy*dc_gridx+idx]+=(sumLeft-sumUp>0)?sumLeft:sumUp;
 	}
-	
-	
-
-	
-
-	//int index = gridDim.x*j+i;
-
-	//int i = threadIdx.x;//*blockIdx.x+ ;
-	//int j = threadIdx.y;
-
-	//if(index<dc_gridx){
-
-
-
-	//}
-	
-	
-	//int idUp = (j-1)*dc_gridx+i;
-	//int idLeft = j*dc_gridx+i-1;
-
-	//double sumup   = (j-1>=0)?d_bins[idUp]:0;				
-	//double sumleft = (i-1>=0)?d_bins[idLeft]:0;						
-
-	
-	//d_bins[id]+= ((sumleft - sumup)>0)?sumleft:sumup;
-
-	//d_bins[id]=id;
-
-	/*
-	int id = j*dc_gridx+i;
-	int idUp = (j-1)*dc_gridx+i;
-	int idLeft = j*dc_gridx+i-1;
-	
-	if(i+j==level){
-		double sumup   = (j-1>=0)?d_bins[idUp]:0;				
-		double sumleft = (i-1>=0)?d_bins[idLeft]:0;						
-
-		//d_bins[id].y = (((sumleft-sumup)>0)?1:-1);
-		d_bins[id]+= ((sumleft - sumup)>0)?sumleft:sumup;
-
-
-	}
-	*/
-
-
-	
-
 
 }
 
@@ -399,36 +360,32 @@ void gpuInitialization(){
 	//result=cudaMalloc(&dc_stepSize, sizeof(float));
 	//result=cudaMalloc(dc_numAsteroids, sizeof(long));
 	//result=cudaMalloc(&dc_gridx, sizeof(float));
-	gridXtoDevice = (int)(h_gridSize.x);
+	int gridXtoDevice = (int)(h_gridSize.x);
 	result = cudaMemcpyToSymbol(dc_gridx, &gridXtoDevice, sizeof(int),0,cudaMemcpyHostToDevice);
 	checkError(result, "Copying gridSize to symbol");
 
 	result = cudaMemcpyToSymbol(dc_stepSize, &stepSize, sizeof(float), 0, cudaMemcpyHostToDevice);
-	checkError(result, "Copying stepsize to symbol");	
-
-	result = cudaMemcpyToSymbol(dc_numAsteroids, &numAsteroids, sizeof(long),0, cudaMemcpyHostToDevice);
-	checkError(result, "Copying num asteroid to symbol");
+	checkError(result, "Copying stepsize to symbol");		
 	
-
-	
-
-	
-	
+	result = cudaMemcpyToSymbol(dc_stepDir, &stepDir, sizeof(Point), 0, cudaMemcpyHostToDevice);
+	checkError(result, "Copying stepDir to symbol");		
 
 	//Allocations for binning
 	result=cudaMalloc(&d_asteroids, numAsteroids*sizeof(Asteroid));
 	checkError(result, "Allocating Asteroid memory");
 
-	result = cudaMemcpy(d_asteroids, h_asteroids, numAsteroids*sizeof(Asteroid), cudaMemcpyHostToDevice);
-	checkError(result, "Copying asteroid Data");
+
+	//std::cout<<"Init number of asteroids: "<<numAsteroids<<std::endl;
+
+	//result = cudaMemcpy(d_asteroids, h_asteroids, numAsteroids*sizeof(Asteroid), cudaMemcpyHostToDevice);
+	//checkError(result, "Init: Copying asteroid Data");
 
 
 	result=cudaMalloc(&d_bins, h_gridSize.x*h_gridSize.x*sizeof(float));
 	checkError(result, "Allocating Bin memory");
 
 	result = cudaMemcpy(d_bins, h_bins, h_gridSize.x*h_gridSize.x*sizeof(float), cudaMemcpyHostToDevice);
-	checkError(result, "Copying bin data to device");
-	
+	checkError(result, "Copying bin data to device");	
 }
 
 void gpuParallelBinning(){
@@ -441,7 +398,7 @@ void gpuParallelBinning(){
 	int numBlocks = ceil((float)numThreads/threadsPerBlock);
 	int cudaGridx = ceil(sqrtf(numBlocks));
 
-	std::cout<<"Binning: numblocks: "<<numBlocks<<", gridX: "<<cudaGridx<<std::endl;
+	std::cout<<"Binning: "<<numAsteroids<<"  numblocks: "<<numBlocks<<", gridX: "<<cudaGridx<<std::endl;
 
 	dim3 cudaBlockSize(cudaBlockx,cudaBlockx,1);
 	//dim3 cudaGridSize(1024, 1024);
@@ -452,7 +409,6 @@ void gpuParallelBinning(){
 	gpuAllocateAsteroidToBin<<<cudaGridSize,cudaBlockSize>>>(d_asteroids, d_bins);
 	cudaThreadSynchronize();
 	//checkError();
-
 }
 
 void gpuValuePropagation(){
@@ -480,54 +436,10 @@ void gpuValuePropagation(){
 	}
 }
 
-void gpuGetPath(){
-	
-
-	using namespace std;
-
-	Point currentPoint;
-	Point nextIndex(h_gridSize.x-1, h_gridSize.x-1);
-	int count = 0;
-	do{		
-		double sumup   = (nextIndex.y-1>=0)?h_compareBinsToGPU[(int)((nextIndex.y-1)*h_gridSize.x+nextIndex.x)]:0;				
-		double sumleft = (nextIndex.x-1>=0)?h_compareBinsToGPU[(int)(nextIndex.y*h_gridSize.x+(nextIndex.x-1))]:0;
-
-		int nextDir = (max(sumleft,sumup)==sumleft)?1:-1;
-		//h_bins[(int)(j*h_gridSize.x+i)].y = (((sumleft-sumup)>0)?1:-1);
-		currentPoint.x=nextIndex.x;
-		currentPoint.y=nextIndex.y;
-
-		if(nextDir==1){nextIndex.x-=1;}
-		if(nextDir==-1){nextIndex.y-=1;}
-		//cout<<"current  : "<<currentPoint<<endl;
-		
-		h_comparePathToGPU[count++]=currentPoint.x;
-		h_comparePathToGPU[count++]=currentPoint.y;
-
-		//cout<<"direction: "<<((nextDir==1)?"left":"up")<<endl; 
-		//cout<<"next     : "<<endl<<endl;
-		
-	}while(currentPoint.x!=0 || currentPoint.y!=0);
-}
-
-
 void gpuCopyDataBack(){
 	using namespace std;
-	result = cudaMemcpy(h_compareBinsToGPU, d_bins, (int)(h_gridSize.x*h_gridSize.x*sizeof(float)), cudaMemcpyDeviceToHost);
-	checkError(result,"Copying bins data back from gpu");
-	
-
-	for(int i = 0; i<h_gridSize.x;++i){
-		for(int j = 0; j<h_gridSize.x;++j){
-
-			//h_compareBinsToGPU[(int)(j*h_gridSize.x+i)]=(h_compareBinsToGPU[(int)(j*h_gridSize.x+i)]==h_bins[(int)(j*h_gridSize.x+i)]);
-		}
-	}
-
-
-
-
-	
+	result = cudaMemcpy(h_bins, d_bins, (int)(h_gridSize.x*h_gridSize.x*sizeof(float)), cudaMemcpyDeviceToHost);
+	checkError(result,"Copying bins data back from gpu");	
 
 	cudaFree(d_asteroids);
 	cudaFree(d_bins);//Bin x is value, y is direction for path calculation
@@ -537,46 +449,107 @@ void gpuCopyDataBack(){
 
 
 
-int main(int argc, char** argv){
-	printf("num %i\n", 8);
-	using namespace std;
-	string fname = "s_data_02.scan";
-	
+void nextChunkInit(){	
 
-	readFile(fname.c_str());
+	result = cudaMemcpyToSymbol(dc_numAsteroids, &numAsteroids, sizeof(long),0, cudaMemcpyHostToDevice);
+	checkError(result, "Copying num asteroid to symbol");
+
+	result = cudaMemcpy(d_asteroids, h_asteroids, numAsteroids*sizeof(Asteroid), cudaMemcpyHostToDevice);
+	checkError(result, "Copying asteroid Data");
+}
+
+
+
+clock_t before, after;
+
+int main(int argc, char** argv){
+	//1200000012
+	using namespace std;
+
+	string fname = "/scratch/gpu/";
+	fname+=argv[1];
+
+	cout<<"Filename: "<<argv[1]<<endl<<endl;
+	
+	ifstream inFile(fname.c_str(), ios::in | ios::binary);	
+	readFile(inFile);
+
+	int asteroidsPerChunk = 10000000;//totalAsteroids; //2 million asteroids 
+	numAsteroids=asteroidsPerChunk;
+
 	cout<<"ShipPosition: "<<h_ship<<endl;
 	cout<<"BasePosition: "<<h_baseStation<<endl;
 
-
 	binInitialization();
+	cout<<"Bin init complete"<<endl;
 	//binInitializationTest();
 	gpuInitialization();
+	cout<<"Gpu init complete"<<endl;
+
+	
+
+
+	
+	timer cpuTime;
+	timer gpuTime;
+
+	double totalGpuTime = 0;
+	double totalCpuTime = 0;
+	
+	for(int i = 0; i<totalAsteroids/asteroidsPerChunk; ++i){
+		
+		readAsteroidChunk(inFile);
+		nextChunkInit();
+
+
+		cpuTime.Start();
+		cpuSequentialBinning();	
+		totalCpuTime+=cpuTime.Stop();
+		gpuTime.Start();
+		gpuParallelBinning();
+		totalGpuTime+=gpuTime.Stop();
+		//cudaThreadSynchronize();
+	}
+
+	
+	int remainingAsteroids=totalAsteroids%asteroidsPerChunk;
+	if(remainingAsteroids!=0){
+		numAsteroids=remainingAsteroids;
+		readAsteroidChunk(inFile);
+		nextChunkInit();
+
+
+		cpuTime.Start();
+		cpuSequentialBinning();	
+		totalCpuTime+=cpuTime.Stop();
+		gpuTime.Start();
+		gpuParallelBinning();
+		totalGpuTime+=gpuTime.Stop();
+	}
+	
+	
+
 	//CPU implementation
-	
-	cpuSequentialBinning();	
-	cpuValuePropagation();
-	binPrint(h_bins);
-	cpuGetPath();
+	//cpuValuePropagation();
+	//binPrint(h_bins);
+	//cpuGetPath();
 	//cout<<"Printing path now: "<<endl;
-	pathPrint(h_path);
+	//pathPrint(h_path);
 
 
-
+	cout<<"Total cpu: "<<totalCpuTime<<endl;
+	cout<<"Total gpu: "<<totalGpuTime<<endl;
 	//GPU implementation
-	
-	gpuParallelBinning();
-	gpuValuePropagation();
+	//gpuValuePropagation();
 	gpuCopyDataBack();
-
-	binPrint(h_compareBinsToGPU);
-
-	gpuGetPath();
-
-	pathPrint(h_comparePathToGPU);
+	//cpuGetPath();
+	binPrint(h_bins);
+	//pathPrint(h_path);
 
 	cout<<"run complete"<<endl;
 
 	cin.get();
+	
 	return 0;
 
 }
